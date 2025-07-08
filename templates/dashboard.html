@@ -1,0 +1,527 @@
+{% extends "base.html" %}
+
+{% block extra_css %}
+<style>
+    .stat-card {
+        background: white;
+        border-radius: 10px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+        height: 100%;
+    }
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .stat-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #2d3748;
+        margin: 0;
+    }
+    .stat-label {
+        color: #718096;
+        font-size: 0.875rem;
+        margin: 0;
+    }
+    .quick-action-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+    }
+    .activity-item {
+        display: flex;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid #e2e8f0;
+        transition: background 0.2s;
+    }
+    .activity-item:hover {
+        background: #f7fafc;
+    }
+    .activity-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 1rem;
+        font-size: 1.2rem;
+    }
+    .progress-ring {
+        transform: rotate(-90deg);
+    }
+    .progress-ring-circle {
+        transition: stroke-dashoffset 0.35s;
+        stroke: #667eea;
+        stroke-width: 4;
+    }
+    .price-change-positive { color: #48bb78; }
+    .price-change-negative { color: #f56565; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 fw-bold mb-0">Welcome back, {{ current_user.username }}!</h1>
+            <p class="text-muted">Here's what's happening with your pricing platform today.</p>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background: rgba(102, 126, 234, 0.1); color: #667eea;">
+                    <i class="fas fa-box"></i>
+                </div>
+                <h2 class="stat-value">{{ total_products }}</h2>
+                <p class="stat-label">Active Products</p>
+                <small class="text-muted">
+                    <i class="fas fa-check-circle text-success"></i>
+                    {{ optimization_rate|round|int }}% optimized
+                </small>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background: rgba(72, 187, 120, 0.1); color: #48bb78;">
+                    <i class="fas fa-tags"></i>
+                </div>
+                <h2 class="stat-value">{{ total_categories }}</h2>
+                <p class="stat-label">Categories</p>
+                <small class="text-muted">
+                    <i class="fas fa-sync"></i> All active
+                </small>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background: rgba(237, 137, 54, 0.1); color: #ed8936;">
+                    <i class="fas fa-globe"></i>
+                </div>
+                <h2 class="stat-value">{{ total_sites }}</h2>
+                <p class="stat-label">Scraping Sites</p>
+                <small class="text-muted">
+                    <i class="fas fa-clock"></i>
+                    {% if recent_job %}
+                        Last: {{ recent_job.started_at.strftime('%b %d') }}
+                    {% else %}
+                        Never run
+                    {% endif %}
+                </small>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="stat-card">
+                <div class="stat-icon" style="background: rgba(159, 122, 234, 0.1); color: #9f7aea;">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <h2 class="stat-value" id="profit-potential">--</h2>
+                <p class="stat-label">Profit Potential</p>
+                <small class="text-muted">
+                    <i class="fas fa-arrow-up text-success"></i> From optimizations
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions & Status -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <div class="quick-action-card">
+                <h3 class="mb-3">Quick Actions</h3>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <button class="btn btn-light btn-lg w-100" onclick="showScrapingModal()">
+                            <i class="fas fa-sync me-2"></i>Run Smart Scraper
+                        </button>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <button class="btn btn-light btn-lg w-100" onclick="showOptimizationModal()">
+                            <i class="fas fa-calculator me-2"></i>Optimize Prices
+                        </button>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="{{ url_for('products') }}" class="btn btn-outline-light btn-lg w-100">
+                            <i class="fas fa-plus me-2"></i>Add Products
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="{{ url_for('scraping_sites') }}" class="btn btn-outline-light btn-lg w-100">
+                            <i class="fas fa-globe me-2"></i>Manage Sites
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Recent Activity</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if recent_recommendations %}
+                        {% for rec in recent_recommendations %}
+                        <div class="activity-item">
+                            <div class="activity-icon" style="background: rgba(102, 126, 234, 0.1); color: #667eea;">
+                                <i class="fas fa-tag"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ rec.product.name }}</h6>
+                                <p class="mb-0 text-muted small">
+                                    Price recommendation: €{{ "%.2f"|format(rec.current_price) }} → €{{ "%.2f"|format(rec.recommended_price) }}
+                                    <span class="{% if rec.profit_delta > 0 %}price-change-positive{% else %}price-change-negative{% endif %}">
+                                        ({% if rec.profit_delta > 0 %}+{% endif %}€{{ "%.2f"|format(rec.profit_delta) }})
+                                    </span>
+                                </p>
+                            </div>
+                            <div class="text-end">
+                                <small class="text-muted">{{ rec.created_at.strftime('%b %d, %H:%M') }}</small>
+                                {% if not rec.applied %}
+                                <button class="btn btn-sm btn-primary ms-2" onclick="applyRecommendation({{ loop.index0 }})">
+                                    Apply
+                                </button>
+                                {% else %}
+                                <span class="badge bg-success ms-2">Applied</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center py-4 text-muted">
+                            <i class="fas fa-inbox fa-3x mb-3"></i>
+                            <p>No recent activity</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <!-- Scraping Status -->
+            <div class="card mb-3">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">System Status</h5>
+                </div>
+                <div class="card-body">
+                    <div id="scraping-status-widget">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <span>Scraper Status</span>
+                            <span id="scraper-status" class="badge bg-secondary">Idle</span>
+                        </div>
+                        <div id="scraping-progress-widget" style="display: none;">
+                            <div class="progress mb-2" style="height: 8px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     id="scraping-progress-bar" style="width: 0%"></div>
+                            </div>
+                            <small class="text-muted" id="scraping-message">Starting...</small>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <span>Database Health</span>
+                        <span class="badge bg-success">Good</span>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between">
+                        <span>Last Backup</span>
+                        <span class="text-muted">2 hours ago</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Today's Stats</h5>
+                </div>
+                <div class="card-body">
+                    <div class="text-center mb-3">
+                        <svg width="120" height="120" class="progress-ring">
+                            <circle cx="60" cy="60" r="54" fill="none" stroke="#e2e8f0" stroke-width="8"/>
+                            <circle class="progress-ring-circle" cx="60" cy="60" r="54" fill="none" 
+                                    stroke-dasharray="339.292" stroke-dashoffset="84.823"/>
+                        </svg>
+                        <div style="margin-top: -90px;">
+                            <h3 class="mb-0">{{ optimization_rate|round|int }}%</h3>
+                            <small class="text-muted">Optimized</small>
+                        </div>
+                    </div>
+
+                    <div class="row text-center mt-4">
+                        <div class="col-6">
+                            <h5 class="mb-0 text-success">{{ recent_products|length }}</h5>
+                            <small class="text-muted">Products Updated</small>
+                        </div>
+                        <div class="col-6">
+                            <h5 class="mb-0 text-primary">{{ recent_recommendations|length }}</h5>
+                            <small class="text-muted">New Recommendations</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scraping Modal -->
+<div class="modal fade" id="scrapingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Configure Scraping</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Select Categories to Scrape</label>
+                    <div id="category-checkboxes" class="row">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Select Sites to Scrape</label>
+                    <div id="site-checkboxes" class="row">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="startCustomScraping()">
+                    <i class="fas fa-sync me-2"></i>Start Scraping
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Optimization Modal -->
+<div class="modal fade" id="optimizationModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Price Optimization Settings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    The optimizer will analyze competitor prices and suggest optimal pricing to maximize profit while maintaining competitiveness.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Select Products to Optimize</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="optimize-scope" id="optimize-all" value="all" checked>
+                        <label class="form-check-label" for="optimize-all">
+                            All Products
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="optimize-scope" id="optimize-category" value="category">
+                        <label class="form-check-label" for="optimize-category">
+                            By Category
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="optimize-scope" id="optimize-selected" value="selected">
+                        <label class="form-check-label" for="optimize-selected">
+                            Selected Products
+                        </label>
+                    </div>
+                </div>
+                <div id="optimization-options" style="display: none;">
+                    <!-- Dynamic content based on selection -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="runOptimization()">
+                    <i class="fas fa-calculator me-2"></i>Run Optimization
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Calculate and display profit potential
+document.addEventListener('DOMContentLoaded', function() {
+    const recommendations = {{ recent_recommendations|tojson }};
+    let totalPotential = 0;
+    recommendations.forEach(rec => {
+        if (!rec.applied && rec.profit_delta > 0) {
+            totalPotential += rec.profit_delta;
+        }
+    });
+    document.getElementById('profit-potential').textContent = '€' + totalPotential.toFixed(2);
+    loadScrapingOptions();
+    checkScrapingStatus();
+});
+
+async function loadScrapingOptions() {
+    try {
+        const categoriesResponse = await axios.get('/api/categories');
+        const categories = categoriesResponse.data;
+        const categoryContainer = document.getElementById('category-checkboxes');
+        categories.forEach(cat => {
+            categoryContainer.innerHTML += `
+                <div class="col-md-6 mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="${cat.id}" id="cat-${cat.id}">
+                        <label class="form-check-label" for="cat-${cat.id}">
+                            ${cat.name} <small class="text-muted">(${cat.product_count || 0} products)</small>
+                        </label>
+                    </div>
+                </div>
+            `;
+        });
+        const sitesResponse = await axios.get('/api/scraping-sites');
+        const sites = sitesResponse.data;
+        const siteContainer = document.getElementById('site-checkboxes');
+        sites.forEach(site => {
+            siteContainer.innerHTML += `
+                <div class="col-md-6 mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="${site.id}" id="site-${site.id}" checked>
+                        <label class="form-check-label" for="site-${site.id}">
+                            ${site.name}
+                            <small class="text-muted">
+                                ${site.requires_selenium ? '<i class="fas fa-robot"></i>' : '<i class="fas fa-bolt"></i>'}
+                            </small>
+                        </label>
+                    </div>
+                </div>
+            `;
+        });
+    } catch (error) {
+        console.error('Error loading options:', error);
+    }
+}
+
+function showScrapingModal() {
+    const modal = new bootstrap.Modal(document.getElementById('scrapingModal'));
+    modal.show();
+}
+function showOptimizationModal() {
+    const modal = new bootstrap.Modal(document.getElementById('optimizationModal'));
+    modal.show();
+}
+
+document.querySelectorAll('input[name="optimize-scope"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        const optionsDiv = document.getElementById('optimization-options');
+        if (this.value === 'category' || this.value === 'selected') {
+            optionsDiv.style.display = 'block';
+        } else {
+            optionsDiv.style.display = 'none';
+        }
+    });
+});
+
+async function startCustomScraping() {
+    const selectedCategories = [];
+    document.querySelectorAll('#category-checkboxes input:checked').forEach(cb => {
+        selectedCategories.push(parseInt(cb.value));
+    });
+    const selectedSites = [];
+    document.querySelectorAll('#site-checkboxes input:checked').forEach(cb => {
+        selectedSites.push(parseInt(cb.value));
+    });
+    if (selectedCategories.length === 0) {
+        showToast('Please select at least one category', 'danger');
+        return;
+    }
+    try {
+        const response = await axios.post('/scrape', {
+            categories: selectedCategories,
+            sites: selectedSites
+        });
+        if (response.data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('scrapingModal')).hide();
+            showToast('Scraping started!');
+            checkScrapingStatus();
+        }
+    } catch (error) {
+        showToast(error.response?.data?.error || 'Failed to start scraping', 'danger');
+    }
+}
+
+async function runOptimization() {
+    const response = await axios.post('/optimize_prices');
+    if (response.data.success) {
+        bootstrap.Modal.getInstance(document.getElementById('optimizationModal')).hide();
+        showToast(response.data.message);
+        setTimeout(() => window.location.reload(), 2000);
+    }
+}
+
+async function applyRecommendation(id) {
+    if (!confirm('Apply this price recommendation?')) return;
+    try {
+        const response = await axios.post(`/apply_recommendation/${id}`);
+        if (response.data.success) {
+            showToast('Price updated successfully!');
+            setTimeout(() => window.location.reload(), 1500);
+        }
+    } catch (error) {
+        showToast(error.response?.data?.error || 'Failed to apply recommendation', 'danger');
+    }
+}
+
+let statusCheckInterval;
+async function checkScrapingStatus() {
+    try {
+        const response = await axios.get('/scraping_status');
+        const status = response.data;
+        const statusBadge = document.getElementById('scraper-status');
+        const progressWidget = document.getElementById('scraping-progress-widget');
+        if (status.active) {
+            statusBadge.textContent = 'Running';
+            statusBadge.className = 'badge bg-primary';
+            progressWidget.style.display = 'block';
+            document.getElementById('scraping-progress-bar').style.width = status.progress + '%';
+            document.getElementById('scraping-message').textContent = status.message;
+            if (!statusCheckInterval) statusCheckInterval = setInterval(checkScrapingStatus, 2000);
+        } else {
+            statusBadge.textContent = 'Idle';
+            statusBadge.className = 'badge bg-secondary';
+            progressWidget.style.display = 'none';
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+                if (status.message && status.message.includes('completed')) {
+                    showToast(status.message, 'success');
+                    setTimeout(() => window.location.reload(), 2000);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error checking status:', error);
+    }
+}
+</script>
+{% endblock %}

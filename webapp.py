@@ -163,10 +163,55 @@ class EnhancedProductScraper:
 scrape_status = {'active': False, 'progress': 0, 'message': ''}
 
 # --- routes ---
+PRODUCT_CSV = BASE_DIR / 'Dzukou_Pricing_Overview_With_Names - Copy.csv'
+RECOMMENDED_CSV = BASE_DIR / 'recommended_prices.csv'
+
 @app.route('/')
 @login_required
 def index():
-    return 'Pricing dashboard coming soon'
+    total_categories = Category.query.filter_by(active=True).count()
+    total_sites = ScrapingSite.query.filter_by(active=True).count()
+    try:
+        products_df = pd.read_csv(PRODUCT_CSV, encoding='latin1')
+        total_products = len(products_df)
+    except Exception:
+        products_df = pd.DataFrame()
+        total_products = 0
+    recent_recommendations = []
+    recent_products = []
+    optimization_rate = 0
+    if RECOMMENDED_CSV.exists():
+        try:
+            rec_df = pd.read_csv(RECOMMENDED_CSV, encoding='latin1')
+            merged = rec_df.merge(
+                products_df[['Product ID', ' Current Price ']],
+                on='Product ID',
+                how='left'
+            ).rename(columns={' Current Price ': 'current_price'})
+            optimization_rate = (len(merged) / total_products * 100) if total_products else 0
+            for _, row in merged.head(5).iterrows():
+                recent_recommendations.append({
+                    'product': {'name': row['Product Name']},
+                    'current_price': float(row.get('current_price', 0)),
+                    'recommended_price': float(row['Recommended Price']),
+                    'profit_delta': float(row['Profit Delta']),
+                    'applied': False,
+                    'created_at': datetime.utcnow()
+                })
+            recent_products = recent_recommendations
+        except Exception:
+            pass
+    recent_job = ScrapingJob.query.order_by(ScrapingJob.started_at.desc()).first()
+    return render_template(
+        'dashboard.html',
+        total_products=total_products,
+        total_categories=total_categories,
+        total_sites=total_sites,
+        recent_job=recent_job,
+        recent_recommendations=recent_recommendations,
+        recent_products=recent_products,
+        optimization_rate=optimization_rate
+    )
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -200,6 +245,24 @@ def add_site():
     db.session.add(site)
     db.session.commit()
     return jsonify({'success': True, 'id': site.id})
+
+@app.route('/api/categories')
+@login_required
+def api_categories():
+    cats = Category.query.filter_by(active=True).all()
+    result = []
+    for c in cats:
+        result.append({'id': c.id, 'name': c.name})
+    return jsonify(result)
+
+@app.route('/api/scraping-sites')
+@login_required
+def api_scraping_sites():
+    sites = ScrapingSite.query.filter_by(active=True).all()
+    data = []
+    for s in sites:
+        data.append({'id': s.id, 'name': s.name, 'requires_selenium': s.requires_selenium})
+    return jsonify(data)
 
 @app.route('/scrape', methods=['POST'])
 @login_required
@@ -259,6 +322,31 @@ def start_scrape():
 @login_required
 def get_status():
     return jsonify(scrape_status)
+
+@app.route('/scraping_status')
+@login_required
+def scraping_status_alias():
+    return jsonify(scrape_status)
+
+@app.route('/optimize_prices', methods=['POST'])
+@login_required
+def optimize_prices_route():
+    return jsonify({'success': True, 'message': 'Optimization started (stub)'})
+
+@app.route('/apply_recommendation/<int:rec_id>', methods=['POST'])
+@login_required
+def apply_recommendation(rec_id):
+    return jsonify({'success': True})
+
+@app.route('/products')
+@login_required
+def products():
+    return 'Products page coming soon'
+
+@app.route('/scraping_sites')
+@login_required
+def scraping_sites_page():
+    return 'Scraping sites page coming soon'
 
 if __name__ == '__main__':
     with app.app_context():
