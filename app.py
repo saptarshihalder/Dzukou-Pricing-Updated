@@ -1,46 +1,60 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, flash
 import subprocess
 import os
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
-from webapp import app as advanced_app
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+import pandas as pd
+import json
+from pathlib import Path
+from datetime import datetime
+import threading
+import time
+import requests
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-app = Flask(__name__)
+# optimisation utils from existing modules
+from price_optimizer import optimize_price, bayesian_optimize_price, simulate_profit, run_ab_test, clean_prices, round_price
+from utils import canonical_key
 
-@app.route('/')
+# --- simple app ---
+simple_app = Flask(__name__)
+
+@simple_app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/manage-products', methods=['GET', 'POST'])
+@simple_app.route('/manage-products', methods=['GET', 'POST'])
 def manage_products():
     if request.method == 'POST':
         try:
-            result = subprocess.run(['python', 'manage_products.py'],
-                                    capture_output=True, text=True)
+            result = subprocess.run(['python', 'manage_products.py'], capture_output=True, text=True)
             return jsonify({'status': 'success', 'output': result.stdout})
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)})
     return render_template('manage_products.html')
 
-@app.route('/scrape', methods=['POST'])
+@simple_app.route('/scrape', methods=['POST'])
 def scrape():
     try:
-        result = subprocess.run(['python', 'scraper.py'],
-                                capture_output=True, text=True)
+        result = subprocess.run(['python', 'scraper.py'], capture_output=True, text=True)
         return jsonify({'status': 'success', 'output': result.stdout})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
-@app.route('/optimize', methods=['POST'])
+@simple_app.route('/optimize', methods=['POST'])
 def optimize():
     try:
-        result = subprocess.run(['python', 'price_optimizer.py'],
-                                capture_output=True, text=True)
+        result = subprocess.run(['python', 'price_optimizer.py'], capture_output=True, text=True)
         return jsonify({'status': 'success', 'output': result.stdout})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
-@app.route('/dashboard')
+@simple_app.route('/dashboard')
 def dashboard():
     try:
         subprocess.run(['python', 'dashboard.py'])
@@ -48,7 +62,341 @@ def dashboard():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
+# --- advanced app ---
+advanced_app = Flask(__name__)
+advanced_app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'changeme')
+advanced_app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///pricing.db')
+advanced_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "product_data"
+DATA_DIR.mkdir(exist_ok=True)
+
+# database
+db = SQLAlchemy(advanced_app)
+login_manager = LoginManager(advanced_app)
+login_manager.login_view = 'login'
+
+# --- Models ---
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200))
+    is_admin = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login = db.Column(db.DateTime)
+
+class Category(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    keywords = db.Column(db.Text)
+    active = db.Column(db.Boolean, default=True)
+
+class ScrapingSite(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    url = db.Column(db.String(500), nullable=False)
+    search_pattern = db.Column(db.String(200))
+    requires_selenium = db.Column(db.Boolean, default=False)
+    selector_config = db.Column(db.Text)
+    active = db.Column(db.Boolean, default=True)
+
+class ScrapingJob(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(50), default='pending')
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    error_log = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    total_products = db.Column(db.Integer, default=0)
+
+class ScrapingResult(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.Integer, db.ForeignKey('scraping_job.id'))
+    site_id = db.Column(db.Integer, db.ForeignKey('scraping_site.id'))
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'))
+    product_name = db.Column(db.String(500))
+    price = db.Column(db.Float)
+    currency = db.Column(db.String(10), default='EUR')
+    url = db.Column(db.String(1000))
+    scraped_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# --- scraper helper ---
+class EnhancedProductScraper:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+
+    def get_chrome_options(self):
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        return options
+
+    def clean_price(self, text):
+        if not text:
+            return None, None
+        text = str(text)
+        numbers = ''.join(c for c in text if c.isdigit() or c in ',.')
+        if not numbers:
+            return None, None
+        return float(numbers.replace(',', '.')), 'EUR'
+
+    def extract_with_config(self, soup, config):
+        try:
+            selectors = json.loads(config) if isinstance(config, str) else config
+        except Exception:
+            selectors = {}
+        container_sel = selectors.get('container', 'div')
+        name_sel = selectors.get('name', 'h1, h2, h3')
+        price_sel = selectors.get('price', '.price')
+        products = []
+        for c in soup.select(container_sel)[:50]:
+            name_elem = c.select_one(name_sel)
+            price_elem = c.select_one(price_sel)
+            name = name_elem.get_text(strip=True) if name_elem else None
+            price_text = price_elem.get_text(strip=True) if price_elem else None
+            price, currency = self.clean_price(price_text)
+            if name and price:
+                products.append({'name': name, 'price': price, 'currency': currency})
+        return products
+
+    def scrape_with_requests(self, site, url):
+        try:
+            resp = self.session.get(url, timeout=10)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.content, 'html.parser')
+                return self.extract_with_config(soup, site.selector_config)
+        except Exception:
+            pass
+        return []
+
+    def scrape_with_selenium(self, site, url):
+        driver = None
+        try:
+            driver = webdriver.Chrome(options=self.get_chrome_options())
+            driver.get(url)
+            time.sleep(3)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            return self.extract_with_config(soup, site.selector_config)
+        except Exception:
+            return []
+        finally:
+            if driver:
+                driver.quit()
+
+    def scrape_site(self, site, terms):
+        results = []
+        for term in terms:
+            url = site.url + site.search_pattern.format(term)
+            if site.requires_selenium:
+                products = self.scrape_with_selenium(site, url)
+            else:
+                products = self.scrape_with_requests(site, url)
+            for p in products:
+                p['search_term'] = term
+                results.append(p)
+            time.sleep(1)
+        return results
+
+scrape_status = {'active': False, 'progress': 0, 'message': ''}
+
+# --- advanced routes ---
+PRODUCT_CSV = BASE_DIR / 'Dzukou_Pricing_Overview_With_Names - Copy.csv'
+RECOMMENDED_CSV = BASE_DIR / 'recommended_prices.csv'
+
+@advanced_app.route('/')
+@login_required
+def dashboard_index():
+    total_categories = Category.query.filter_by(active=True).count()
+    total_sites = ScrapingSite.query.filter_by(active=True).count()
+    try:
+        products_df = pd.read_csv(PRODUCT_CSV, encoding='latin1')
+        total_products = len(products_df)
+    except Exception:
+        products_df = pd.DataFrame()
+        total_products = 0
+    recent_recommendations = []
+    recent_products = []
+    optimization_rate = 0
+    if RECOMMENDED_CSV.exists():
+        try:
+            rec_df = pd.read_csv(RECOMMENDED_CSV, encoding='latin1')
+            merged = rec_df.merge(
+                products_df[['Product ID', ' Current Price ']],
+                on='Product ID',
+                how='left',
+            ).rename(columns={' Current Price ': 'current_price'})
+            optimization_rate = (len(merged) / total_products * 100) if total_products else 0
+            for _, row in merged.head(5).iterrows():
+                recent_recommendations.append({
+                    'product': {'name': row['Product Name']},
+                    'current_price': float(row.get('current_price', 0)),
+                    'recommended_price': float(row['Recommended Price']),
+                    'profit_delta': float(row['Profit Delta']),
+                    'applied': False,
+                    'created_at': datetime.utcnow()
+                })
+            recent_products = recent_recommendations
+        except Exception:
+            pass
+    recent_job = ScrapingJob.query.order_by(ScrapingJob.started_at.desc()).first()
+    return render_template(
+        'dashboard.html',
+        total_products=total_products,
+        total_categories=total_categories,
+        total_sites=total_sites,
+        recent_job=recent_job,
+        recent_recommendations=recent_recommendations,
+        recent_products=recent_products,
+        optimization_rate=optimization_rate
+    )
+
+@advanced_app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        user = User.query.filter_by(username=request.form['username']).first()
+        if user and check_password_hash(user.password_hash, request.form['password']):
+            login_user(user)
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            return redirect(url_for('dashboard_index'))
+        flash('Invalid credentials')
+    return '<form method="post">User: <input name="username">Pass: <input name="password" type="password"><input type="submit"></form>'
+
+@advanced_app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+@advanced_app.route('/add_site', methods=['POST'])
+@login_required
+def add_site():
+    data = request.json
+    site = ScrapingSite(
+        name=data['name'],
+        url=data['url'].rstrip('/'),
+        search_pattern=data.get('search_pattern', '/search?q={}'),
+        requires_selenium=data.get('requires_selenium', False),
+        selector_config=json.dumps(data.get('selector_config', {}))
+    )
+    db.session.add(site)
+    db.session.commit()
+    return jsonify({'success': True, 'id': site.id})
+
+@advanced_app.route('/api/categories')
+@login_required
+def api_categories():
+    cats = Category.query.filter_by(active=True).all()
+    result = []
+    for c in cats:
+        result.append({'id': c.id, 'name': c.name})
+    return jsonify(result)
+
+@advanced_app.route('/api/scraping-sites')
+@login_required
+def api_scraping_sites():
+    sites = ScrapingSite.query.filter_by(active=True).all()
+    data = []
+    for s in sites:
+        data.append({'id': s.id, 'name': s.name, 'requires_selenium': s.requires_selenium})
+    return jsonify(data)
+
+@advanced_app.route('/scrape', methods=['POST'])
+@login_required
+def start_scrape():
+    if scrape_status['active']:
+        return jsonify({'success': False, 'error': 'Scraper already running'}), 400
+    data = request.json or {}
+    category_ids = data.get('categories', [])
+    site_ids = data.get('sites', [])
+
+    def run():
+        scrape_status.update({'active': True, 'progress': 0, 'message': 'Running'})
+        job = ScrapingJob(status='running', started_at=datetime.utcnow(), created_by=current_user.id)
+        db.session.add(job)
+        db.session.commit()
+        try:
+            categories = Category.query.filter(Category.id.in_(category_ids)).all() if category_ids else Category.query.filter_by(active=True).all()
+            sites = ScrapingSite.query.filter(ScrapingSite.id.in_(site_ids)).all() if site_ids else ScrapingSite.query.filter_by(active=True).all()
+            total = len(categories) * len(sites)
+            done = 0
+            scraper = EnhancedProductScraper()
+            total_products = 0
+            for category in categories:
+                terms = json.loads(category.keywords or '[]')
+                if not terms:
+                    continue
+                for site in sites:
+                    products = scraper.scrape_site(site, terms)
+                    for p in products:
+                        r = ScrapingResult(
+                            job_id=job.id,
+                            site_id=site.id,
+                            category_id=category.id,
+                            product_name=p['name'],
+                            price=p['price'],
+                            currency=p['currency'],
+                            url=p.get('url')
+                        )
+                        db.session.add(r)
+                    total_products += len(products)
+                    done += 1
+                    scrape_status['progress'] = int(done / total * 100)
+                    db.session.commit()
+            job.status='completed'
+            job.total_products = total_products
+            job.completed_at = datetime.utcnow()
+        except Exception as e:
+            job.status='failed'
+            job.error_log=str(e)
+        finally:
+            scrape_status.update({'active': False, 'message': 'finished'})
+            db.session.commit()
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'success': True})
+
+@advanced_app.route('/scrape_status')
+@login_required
+def get_status():
+    return jsonify(scrape_status)
+
+@advanced_app.route('/scraping_status')
+@login_required
+def scraping_status_alias():
+    return jsonify(scrape_status)
+
+@advanced_app.route('/optimize_prices', methods=['POST'])
+@login_required
+def optimize_prices_route():
+    return jsonify({'success': True, 'message': 'Optimization started (stub)'})
+
+@advanced_app.route('/apply_recommendation/<int:rec_id>', methods=['POST'])
+@login_required
+def apply_recommendation(rec_id):
+    return jsonify({'success': True})
+
+@advanced_app.route('/products')
+@login_required
+def products():
+    return 'Products page coming soon'
+
+@advanced_app.route('/scraping_sites')
+@login_required
+def scraping_sites_page():
+    return 'Scraping sites page coming soon'
+
+# --- main entry ---
 if __name__ == '__main__':
+    with advanced_app.app_context():
+        db.create_all()
     port = int(os.environ.get('PORT', 8080))
-    application = DispatcherMiddleware(app, {'/advanced': advanced_app})
+    application = DispatcherMiddleware(simple_app, {'/advanced': advanced_app})
     run_simple('0.0.0.0', port, application)
