@@ -85,19 +85,4 @@ python dashboard.py
 
 The generated CSV and HTML files can be shared with the rest of the team for review. Feel free to customise the scripts to add stores, adjust the demand model or extend the dashboard.
 
-## Running on Fly.io
-
-If you deploy this project on [Fly.io](https://fly.io) you may encounter errors
-when `mise` tries to download a prebuilt Python archive. Configure `mise` to
-compile Python from source instead:
-
-```bash
-mise settings set python_compile 1
-mise use -g python@3.12
-```
-
-The Flask app in `webapp.py` reads the `PORT` environment variable and listens
-on `0.0.0.0`, so Fly's router can reach it. Ensure your Fly configuration sets
-`PORT` accordingly (the default is `8080`).
-
 
