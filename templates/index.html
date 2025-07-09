@@ -1,17 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container py-5">
-    <h1>Dzukou Pricing Toolkit</h1>
-    <p>Use the actions below to run the pricing workflow.</p>
-    <form action="/manage-products" method="post" class="mb-2">
-        <button class="btn btn-primary">Manage Products</button>
-    </form>
-    <form action="/scrape" method="post" class="mb-2">
-        <button class="btn btn-secondary">Run Scraper</button>
-    </form>
-    <form action="/optimize" method="post" class="mb-2">
-        <button class="btn btn-success">Optimize Prices</button>
-    </form>
-    <a href="/dashboard" class="btn btn-info">View Dashboard</a>
+<div class="container py-5 text-center">
+    <h1 class="display-4 fw-bold mb-3">Dzukou Pricing Toolkit</h1>
+    <p class="lead mb-4">Run the full workflow from product management to price optimisation.</p>
+    <div class="d-grid gap-3 d-sm-flex justify-content-sm-center flex-wrap">
+        <form action="/manage-products" method="post">
+            <button class="btn btn-primary btn-lg px-4 mb-2"><i class="fas fa-box me-2"></i>Manage Products</button>
+        </form>
+        <form action="/scrape" method="post">
+            <button class="btn btn-secondary btn-lg px-4 mb-2"><i class="fas fa-search me-2"></i>Run Scraper</button>
+        </form>
+        <form action="/optimize" method="post">
+            <button class="btn btn-success btn-lg px-4 mb-2"><i class="fas fa-cogs me-2"></i>Optimize Prices</button>
+        </form>
+        <a href="/dashboard" class="btn btn-info btn-lg px-4 mb-2"><i class="fas fa-chart-bar me-2"></i>View Dashboard</a>
+        <a href="/advanced" class="btn btn-dark btn-lg px-4 mb-2"><i class="fas fa-rocket me-2"></i>Advanced App</a>
+    </div>
 </div>
 {% endblock %}

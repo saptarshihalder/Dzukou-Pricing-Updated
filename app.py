@@ -1,6 +1,9 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import subprocess
 import os
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+from werkzeug.serving import run_simple
+from webapp import app as advanced_app
 
 app = Flask(__name__)
 
@@ -47,4 +50,5 @@ def dashboard():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    application = DispatcherMiddleware(app, {'/advanced': advanced_app})
+    run_simple('0.0.0.0', port, application)
