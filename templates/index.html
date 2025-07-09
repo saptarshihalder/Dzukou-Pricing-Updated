@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-5">
+    <h1>Dzukou Pricing Toolkit</h1>
+    <p>Use the actions below to run the pricing workflow.</p>
+    <form action="/manage-products" method="post" class="mb-2">
+        <button class="btn btn-primary">Manage Products</button>
+    </form>
+    <form action="/scrape" method="post" class="mb-2">
+        <button class="btn btn-secondary">Run Scraper</button>
+    </form>
+    <form action="/optimize" method="post" class="mb-2">
+        <button class="btn btn-success">Optimize Prices</button>
+    </form>
+    <a href="/dashboard" class="btn btn-info">View Dashboard</a>
+</div>
+{% endblock %}
