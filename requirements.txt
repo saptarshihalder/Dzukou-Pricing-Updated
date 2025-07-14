@@ -8,3 +8,5 @@ selenium
 
 streamlit
 plotly
+scipy
+scikit-optimize
