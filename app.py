@@ -3,516 +3,567 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
-import subprocess
-import sys
+import zipfile
+import tempfile
+import shutil
 import json
-import os
+import io
 from datetime import datetime
 
-# Import your existing modules
-sys.path.append(str(Path(__file__).parent))
-from scraper import ProductScraper, DEFAULT_CATEGORIES
+# Import your optimization modules
 from price_optimizer import (
     read_overview, read_prices, suggest_price, categorize_product,
     simulate_profit, run_ab_test, DEMAND_ELASTICITY, DEMAND_SATURATION
 )
 from dashboard import load_data, build_dashboard
-from utils import canonical_key
 
-# Set page config
+# Page config
 st.set_page_config(
-    page_title="Dzukou Dynamic Pricing",
+    page_title="Dzukou Dynamic Pricing Dashboard",
     page_icon="🎯",
     layout="wide"
 )
 
 # Initialize session state
-if 'scraping_complete' not in st.session_state:
-    st.session_state.scraping_complete = False
+if 'data_uploaded' not in st.session_state:
+    st.session_state.data_uploaded = False
+if 'scraper_data' not in st.session_state:
+    st.session_state.scraper_data = {}
 if 'optimization_complete' not in st.session_state:
     st.session_state.optimization_complete = False
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
 <style>
-    .stButton>button {
-        background-color: #667eea;
-        color: white;
-        font-weight: bold;
-        border-radius: 10px;
-        border: none;
-        padding: 0.5rem 1rem;
-        transition: all 0.3s;
+    .upload-box {
+        border: 3px dashed #667eea;
+        border-radius: 20px;
+        padding: 40px;
+        text-align: center;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        margin: 20px 0;
     }
-    .stButton>button:hover {
-        background-color: #764ba2;
-        transform: translateY(-2px);
+    .upload-box h3 {
+        color: #667eea;
+        margin-bottom: 20px;
+    }
+    .success-box {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+    }
+    .instruction-box {
+        background: #e8f4f8;
+        border-left: 4px solid #667eea;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 5px;
     }
     .metric-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        background: white;
         padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    }
-    .success-message {
-        padding: 1rem;
         border-radius: 10px;
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Header
 st.title("🎯 Dzukou Dynamic Pricing Dashboard")
-st.markdown("### Optimize your product pricing with competitor analysis")
+st.markdown("### Cloud-based pricing optimization system")
 
-# Sidebar for navigation
+# Sidebar navigation
 with st.sidebar:
     st.header("Navigation")
+    
+    # Show upload status
+    if st.session_state.data_uploaded:
+        st.success("✅ Data uploaded")
+    else:
+        st.warning("⚠️ Please upload data first")
+    
     page = st.radio(
-        "Choose a section:",
-        ["📊 Dashboard", "➕ Add Products", "🔍 Scrape Prices", "💡 Optimize Prices", "📈 View Results"]
+        "Select Page:",
+        ["📤 Upload Data", "💡 Optimize Prices", "📊 View Dashboard", "📈 Analysis", "ℹ️ Instructions"]
+    )
+
+# Page: Upload Data
+if page == "📤 Upload Data":
+    st.header("📤 Upload Scraper Data")
+    
+    # Instructions
+    with st.expander("📋 How to prepare your data", expanded=True):
+        st.markdown("""
+        ### Step 1: Run the scraper locally
+        1. Open terminal/command prompt on your computer
+        2. Navigate to your project folder
+        3. Run: `python scraper.py`
+        4. Wait for scraping to complete
+        
+        ### Step 2: Prepare the upload
+        You can upload data in two ways:
+        - **Option A**: Upload individual CSV files from `product_data/` folder
+        - **Option B**: Create a ZIP file of the entire `product_data/` folder
+        
+        ### Required files:
+        - All CSV files from `product_data/` folder
+        - `Dzukou_Pricing_Overview_With_Names - Copy.csv`
+        - `product_data_mapping.csv`
+        - `category_keywords.json` (optional)
+        """)
+    
+    # File upload section
+    st.markdown("<div class='upload-box'>", unsafe_allow_html=True)
+    st.markdown("### 📁 Choose your upload method")
+    
+    upload_method = st.radio(
+        "Select method:",
+        ["Upload ZIP file (recommended)", "Upload individual CSV files"]
     )
     
-    st.markdown("---")
-    st.markdown("### Quick Guide")
-    st.markdown("""
-    1. **Add Products**: Register new products
-    2. **Scrape Prices**: Collect competitor data
-    3. **Optimize Prices**: Generate recommendations
-    4. **View Results**: Analyze profit impact
-    """)
-
-# Main content based on selected page
-if page == "📊 Dashboard":
-    st.header("📊 Pricing Overview Dashboard")
+    if upload_method == "Upload ZIP file (recommended)":
+        st.markdown("#### Upload a ZIP file containing all your data")
+        uploaded_zip = st.file_uploader(
+            "Choose ZIP file",
+            type=['zip'],
+            help="Create a ZIP of your product_data folder and other required files"
+        )
+        
+        if uploaded_zip is not None:
+            # Process ZIP file
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                
+                # Extract ZIP
+                with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
+                    zip_ref.extractall(temp_path)
+                
+                # Process extracted files
+                st.success("✅ ZIP file uploaded successfully!")
+                
+                # Look for product_data folder or CSV files
+                csv_files = list(temp_path.rglob("*.csv"))
+                json_files = list(temp_path.rglob("*.json"))
+                
+                if csv_files:
+                    st.write(f"Found {len(csv_files)} CSV files")
+                    
+                    # Store data in session state
+                    for csv_file in csv_files:
+                        df = pd.read_csv(csv_file, encoding='utf-8', errors='ignore')
+                        file_name = csv_file.name
+                        st.session_state.scraper_data[file_name] = df
+                        st.write(f"- {file_name}: {len(df)} rows")
+                    
+                    st.session_state.data_uploaded = True
+                    st.balloons()
+                else:
+                    st.error("No CSV files found in the ZIP!")
     
-    # Check if we have optimization results
-    if Path("recommended_prices.csv").exists():
-        try:
-            # Load and display data
-            df = load_data()
-            
-            # Display key metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            total_profit_increase = df["Profit Delta"].sum()
-            avg_price_increase = df["Price Delta %"].mean()
-            products_with_increase = (df["Price Delta"] > 0).sum()
-            
-            with col1:
-                st.metric(
-                    "Total Profit Increase",
-                    f"€{total_profit_increase:,.2f}",
-                    f"+{(total_profit_increase/df['Current Price'].sum()*100):.1f}%"
-                )
-            
-            with col2:
-                st.metric(
-                    "Avg Price Change",
-                    f"{avg_price_increase:.1f}%"
-                )
-            
-            with col3:
-                st.metric(
-                    "Products to Increase",
-                    f"{products_with_increase}/{len(df)}"
-                )
-            
-            with col4:
-                if "AB P-Value" in df.columns:
-                    significant = (df["AB P-Value"] < 0.05).sum()
-                    st.metric(
-                        "Significant Changes",
-                        f"{significant}/{len(df)}"
-                    )
-            
-            st.markdown("---")
-            
-            # Profit Delta Chart
-            st.subheader("💰 Profit Delta by Product")
-            fig_delta = go.Figure()
-            fig_delta.add_trace(
-                go.Bar(
-                    x=df["Product Name"],
-                    y=df["Profit Delta"],
-                    marker=dict(
-                        color=df["Profit Delta"],
-                        colorscale='RdYlGn',
-                        showscale=True,
-                        colorbar=dict(title="Profit Δ (€)")
-                    ),
-                    text=[f"€{x:.2f}" for x in df["Profit Delta"]],
-                    textposition="outside",
-                )
-            )
-            fig_delta.update_layout(
-                height=500,
-                xaxis_tickangle=-45,
-                yaxis_title="Profit Delta (€)",
-                showlegend=False
-            )
-            st.plotly_chart(fig_delta, use_container_width=True)
-            
-            # Price Comparison
-            st.subheader("💸 Current vs Recommended Prices")
-            price_comparison = pd.DataFrame({
-                'Product': df['Product Name'],
-                'Current Price': df['Current Price'],
-                'Recommended Price': df['Recommended Price']
-            })
-            price_comparison = price_comparison.melt(
-                id_vars='Product',
-                var_name='Price Type',
-                value_name='Price'
-            )
-            
-            fig_price = px.bar(
-                price_comparison,
-                x='Product',
-                y='Price',
-                color='Price Type',
-                barmode='group',
-                color_discrete_map={
-                    'Current Price': '#3498db',
-                    'Recommended Price': '#e74c3c'
-                }
-            )
-            fig_price.update_layout(
-                height=500,
-                xaxis_tickangle=-45,
-                yaxis_title="Price (€)"
-            )
-            st.plotly_chart(fig_price, use_container_width=True)
-            
-            # Detailed table
-            st.subheader("📋 Detailed Product Analysis")
-            display_df = df[[
-                'Product Name', 'Category', 'Current Price', 'Recommended Price',
-                'Price Delta %', 'Profit Delta'
-            ]].copy()
-            
-            # Format columns
-            display_df['Current Price'] = display_df['Current Price'].apply(lambda x: f"€{x:.2f}")
-            display_df['Recommended Price'] = display_df['Recommended Price'].apply(lambda x: f"€{x:.2f}")
-            display_df['Price Delta %'] = display_df['Price Delta %'].apply(lambda x: f"{x:.1f}%")
-            display_df['Profit Delta'] = display_df['Profit Delta'].apply(lambda x: f"€{x:.2f}")
-            
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True
-            )
-            
-        except Exception as e:
-            st.error(f"Error loading dashboard data: {str(e)}")
-            st.info("Please run the optimization first to generate results.")
     else:
-        st.info("No pricing recommendations found. Please run the complete workflow first.")
-        st.markdown("""
-        ### Getting Started:
-        1. Go to **Add Products** to register your products
-        2. Use **Scrape Prices** to collect competitor data
-        3. Run **Optimize Prices** to generate recommendations
-        """)
-
-elif page == "➕ Add Products":
-    st.header("➕ Add New Product")
-    
-    with st.form("add_product_form"):
-        col1, col2 = st.columns(2)
+        st.markdown("#### Upload individual files")
         
-        with col1:
-            product_name = st.text_input("Product Name*", placeholder="e.g., Bamboo Sunglasses")
-            product_id = st.text_input("Product ID*", placeholder="e.g., SKU123")
-            category = st.text_input("Category*", placeholder="e.g., Sunglasses")
+        # Multiple file uploader
+        uploaded_files = st.file_uploader(
+            "Choose CSV files",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="Select all CSV files from your product_data folder"
+        )
         
-        with col2:
-            current_price = st.number_input("Current Price (€)*", min_value=0.0, step=0.50)
-            unit_cost = st.number_input("Unit Cost (€)*", min_value=0.0, step=0.50)
-            keywords = st.text_area(
-                "Search Keywords*",
-                placeholder="Enter keywords separated by commas\ne.g., bamboo sunglasses, eco sunglasses, wooden eyewear",
-                height=100
-            )
+        # Overview file
+        overview_file = st.file_uploader(
+            "Upload Overview CSV",
+            type=['csv'],
+            help="Dzukou_Pricing_Overview_With_Names - Copy.csv"
+        )
         
-        submitted = st.form_submit_button("Add Product", type="primary")
+        # Mapping file
+        mapping_file = st.file_uploader(
+            "Upload Mapping CSV",
+            type=['csv'],
+            help="product_data_mapping.csv"
+        )
         
-        if submitted:
-            if all([product_name, product_id, category, current_price > 0, unit_cost > 0, keywords]):
-                try:
-                    # Add logic to save product
-                    # This would integrate with your existing manage_products.py logic
-                    success_msg = f"""
-                    <div class="success-message">
-                    ✅ Successfully added product: <strong>{product_name}</strong><br>
-                    Category: {category}<br>
-                    Keywords: {keywords}
-                    </div>
-                    """
-                    st.markdown(success_msg, unsafe_allow_html=True)
-                    
-                    # Here you would call your existing product management functions
-                    
-                except Exception as e:
-                    st.error(f"Error adding product: {str(e)}")
-            else:
-                st.error("Please fill in all required fields")
-    
-    # Display existing products
-    st.markdown("---")
-    st.subheader("📦 Existing Products")
-    
-    if Path("Dzukou_Pricing_Overview_With_Names - Copy.csv").exists():
-        try:
-            existing_products = pd.read_csv("Dzukou_Pricing_Overview_With_Names - Copy.csv", encoding="cp1252")
-            st.dataframe(existing_products, use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.info("No products found. Add your first product above!")
-
-elif page == "🔍 Scrape Prices":
-    st.header("🔍 Competitor Price Scraping")
-    
-    st.markdown("""
-    This tool searches sustainable online stores for competitor prices in each product category.
-    The process may take several minutes depending on the number of categories.
-    """)
-    
-    # Display categories to be scraped
-    categories = list(DEFAULT_CATEGORIES.keys())
-    if Path("category_keywords.json").exists():
-        with open("category_keywords.json", "r") as f:
-            kw_data = json.load(f)
-            categories.extend([k for k in kw_data.keys() if k not in categories])
-    
-    st.info(f"**Categories to scrape:** {len(categories)}")
-    
-    cols = st.columns(3)
-    for i, cat in enumerate(categories):
-        cols[i % 3].markdown(f"• {cat}")
-    
-    st.markdown("---")
-    
-    if st.button("🚀 Start Scraping", type="primary"):
-        with st.spinner("Scraping competitor prices... This may take a few minutes..."):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+        if uploaded_files and overview_file and mapping_file:
+            # Process files
+            st.success("✅ Files uploaded successfully!")
             
-            try:
-                # Initialize scraper
-                scraper = ProductScraper()
+            # Store in session state
+            for file in uploaded_files:
+                df = pd.read_csv(file, encoding='utf-8', errors='ignore')
+                st.session_state.scraper_data[file.name] = df
                 
-                # Simulate scraping progress
-                total_tasks = len(scraper.product_categories) * len(scraper.stores)
-                current_task = 0
-                
-                # Here you would integrate with the actual scraper
-                # For now, we'll show a simulation
-                for i, (category, info) in enumerate(scraper.product_categories.items()):
-                    for j, (store, _) in enumerate(scraper.stores.items()):
-                        current_task += 1
-                        progress = current_task / total_tasks
-                        progress_bar.progress(progress)
-                        status_text.text(f"Scraping {store} for {category}...")
-                        
-                        # In production, you would call:
-                        # products = scraper.scrape_store(store, store_cfg, category, terms)
-                
-                # Save results
-                scraper.save_category_csvs()
-                
-                st.session_state.scraping_complete = True
-                st.success("✅ Scraping completed successfully!")
-                
-                # Show summary
-                st.markdown("### Scraping Summary")
-                data_dir = Path("product_data")
-                if data_dir.exists():
-                    for csv_file in data_dir.glob("*.csv"):
-                        df = pd.read_csv(csv_file)
-                        st.metric(
-                            csv_file.stem.replace("_", " ").title(),
-                            f"{len(df)} products found"
-                        )
-                
-            except Exception as e:
-                st.error(f"Error during scraping: {str(e)}")
+            # Store special files
+            st.session_state.scraper_data['overview'] = pd.read_csv(overview_file, encoding='cp1252', errors='ignore')
+            st.session_state.scraper_data['mapping'] = pd.read_csv(mapping_file)
+            
+            st.session_state.data_uploaded = True
+            
+            # Show summary
+            st.write("### 📊 Upload Summary")
+            for name, df in st.session_state.scraper_data.items():
+                if name not in ['overview', 'mapping']:
+                    st.write(f"- {name}: {len(df)} products")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
+# Page: Optimize Prices
 elif page == "💡 Optimize Prices":
     st.header("💡 Price Optimization")
     
-    if not st.session_state.scraping_complete and not Path("product_data").exists():
-        st.warning("⚠️ Please run the scraper first to collect competitor data.")
-    else:
-        st.markdown("""
-        The optimizer analyzes competitor prices and suggests new prices that maximize profit
-        while respecting market constraints and category-specific parameters.
-        """)
-        
-        # Show optimization parameters
-        with st.expander("🔧 Optimization Parameters"):
-            st.markdown("""
-            - **Profit Margins**: Category-specific minimum margins (10-30%)
-            - **Demand Elasticity**: How sensitive customers are to price changes
-            - **Max Price Increase**: Limited to 30% above current price
-            - **Market Position**: Stays competitive with market average
-            """)
-        
-        if st.button("🎯 Run Price Optimization", type="primary"):
-            with st.spinner("Optimizing prices..."):
-                try:
-                    # Run the optimizer
-                    # In production, you would import and run your price_optimizer.main()
-                    
-                    # For now, simulate the process
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # Load products
-                    overview = read_overview()
-                    total_products = len(overview)
-                    
-                    for i, (product_name, info) in enumerate(overview.items()):
-                        progress = (i + 1) / total_products
-                        progress_bar.progress(progress)
-                        status_text.text(f"Optimizing price for: {product_name}")
-                    
-                    st.session_state.optimization_complete = True
-                    st.success("✅ Price optimization completed!")
-                    
-                    # Show quick results
-                    if Path("recommended_prices.csv").exists():
-                        results_df = pd.read_csv("recommended_prices.csv")
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            total_profit = results_df["Profit Delta"].sum()
-                            st.metric("Total Profit Increase", f"€{total_profit:,.2f}")
-                        with col2:
-                            products_improved = (results_df["Profit Delta"] > 0).sum()
-                            st.metric("Products Improved", f"{products_improved}/{len(results_df)}")
-                        with col3:
-                            avg_change = results_df["Profit Delta"].mean()
-                            st.metric("Avg Profit Change", f"€{avg_change:.2f}")
-                        
-                        st.info("Go to **View Results** to see detailed analysis")
-                    
-                except Exception as e:
-                    st.error(f"Error during optimization: {str(e)}")
-
-elif page == "📈 View Results":
-    st.header("📈 Optimization Results")
+    if not st.session_state.data_uploaded:
+        st.warning("⚠️ Please upload data first!")
+        st.stop()
     
-    if not st.session_state.optimization_complete and not Path("recommended_prices.csv").exists():
-        st.warning("⚠️ Please run the price optimization first.")
-    else:
-        # Load results
-        results_df = pd.read_csv("recommended_prices.csv")
-        
-        # Summary statistics
-        st.subheader("📊 Summary Statistics")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
+    st.markdown("""
+    The optimizer will analyze competitor prices and suggest optimal pricing for each product.
+    """)
+    
+    # Show optimization parameters
+    with st.expander("⚙️ Optimization Settings"):
+        col1, col2 = st.columns(2)
         with col1:
-            total_current = results_df["Profit Current"].sum()
-            total_recommended = results_df["Profit Recommended"].sum()
-            increase = total_recommended - total_current
-            st.metric(
-                "Profit Impact",
-                f"€{increase:,.2f}",
-                f"+{(increase/total_current*100):.1f}%"
-            )
-        
+            max_increase = st.slider("Max price increase %", 0, 50, 30)
+            max_decrease = st.slider("Max price decrease %", 0, 50, 25)
         with col2:
-            avg_competitor = results_df["Avg Competitor Price"].mean()
-            st.metric(
-                "Avg Competitor Price",
-                f"€{avg_competitor:.2f}"
-            )
+            st.info("""
+            - **Demand elasticity**: How sensitive customers are to price
+            - **Profit margins**: Minimum acceptable margins by category
+            - **Market position**: Stay competitive with averages
+            """)
+    
+    if st.button("🚀 Run Price Optimization", type="primary"):
+        with st.spinner("Optimizing prices..."):
+            try:
+                # Get data from session state
+                overview_df = st.session_state.scraper_data.get('overview')
+                mapping_df = st.session_state.scraper_data.get('mapping')
+                
+                if overview_df is None or mapping_df is None:
+                    st.error("Missing required files!")
+                    st.stop()
+                
+                # Progress tracking
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                results = []
+                total_products = len(mapping_df)
+                
+                # Process each product
+                for idx, row in mapping_df.iterrows():
+                    progress = (idx + 1) / total_products
+                    progress_bar.progress(progress)
+                    
+                    product_name = row['Product Name'].strip()
+                    data_file = row['Data File'].strip()
+                    
+                    status_text.text(f"Optimizing: {product_name}")
+                    
+                    # Get product info from overview
+                    product_info = overview_df[overview_df['Product Name'] == product_name]
+                    if product_info.empty:
+                        continue
+                    
+                    current_price = float(str(product_info.iloc[0][' Current Price ']).replace('€', '').strip())
+                    unit_cost = float(str(product_info.iloc[0][' Unit Cost ']).replace('€', '').strip())
+                    
+                    # Get competitor prices
+                    data_file_name = Path(data_file).name
+                    if data_file_name in st.session_state.scraper_data:
+                        competitor_df = st.session_state.scraper_data[data_file_name]
+                        prices = competitor_df['price'].dropna().tolist()
+                        prices = [p for p in prices if p > 0]
+                    else:
+                        prices = []
+                    
+                    # Determine category and optimize
+                    category = categorize_product(product_name)
+                    
+                    if prices:
+                        # Your existing optimization logic
+                        recommended_price = suggest_price(
+                            product_name,
+                            category,
+                            prices,
+                            current_price,
+                            unit_cost
+                        )
+                        
+                        # Calculate metrics
+                        avg_competitor = sum(prices) / len(prices) if prices else current_price
+                        
+                        results.append({
+                            'Product Name': product_name,
+                            'Product ID': row['Product ID'],
+                            'Category': category,
+                            'Current Price': current_price,
+                            'Recommended Price': recommended_price,
+                            'Avg Competitor Price': avg_competitor,
+                            'Competitor Count': len(prices),
+                            'Price Change %': ((recommended_price - current_price) / current_price) * 100
+                        })
+                
+                # Store results
+                st.session_state.optimization_results = pd.DataFrame(results)
+                st.session_state.optimization_complete = True
+                
+                progress_bar.progress(1.0)
+                status_text.text("Optimization complete!")
+                
+                # Show summary
+                st.success(f"✅ Optimized {len(results)} products successfully!")
+                
+                # Quick metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    avg_change = st.session_state.optimization_results['Price Change %'].mean()
+                    st.metric("Average Price Change", f"{avg_change:.1f}%")
+                with col2:
+                    increases = (st.session_state.optimization_results['Price Change %'] > 0).sum()
+                    st.metric("Price Increases", f"{increases}/{len(results)}")
+                with col3:
+                    decreases = (st.session_state.optimization_results['Price Change %'] < 0).sum()
+                    st.metric("Price Decreases", f"{decreases}/{len(results)}")
+                
+            except Exception as e:
+                st.error(f"Error during optimization: {str(e)}")
+                st.exception(e)
+
+# Page: View Dashboard
+elif page == "📊 View Dashboard":
+    st.header("📊 Pricing Dashboard")
+    
+    if not st.session_state.optimization_complete:
+        st.warning("⚠️ Please run price optimization first!")
+        st.stop()
+    
+    # Get results
+    df = st.session_state.optimization_results
+    
+    # Price comparison chart
+    st.subheader("💰 Current vs Recommended Prices")
+    
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Bar(
+        name='Current Price',
+        x=df['Product Name'],
+        y=df['Current Price'],
+        marker_color='lightblue'
+    ))
+    fig_price.add_trace(go.Bar(
+        name='Recommended Price',
+        x=df['Product Name'],
+        y=df['Recommended Price'],
+        marker_color='darkblue'
+    ))
+    fig_price.update_layout(
+        barmode='group',
+        xaxis_tickangle=-45,
+        height=500
+    )
+    st.plotly_chart(fig_price, use_container_width=True)
+    
+    # Price change percentage
+    st.subheader("📈 Price Change Percentage")
+    
+    fig_change = px.bar(
+        df,
+        x='Product Name',
+        y='Price Change %',
+        color='Price Change %',
+        color_continuous_scale='RdYlGn',
+        title="Price Change by Product"
+    )
+    fig_change.update_layout(xaxis_tickangle=-45, height=400)
+    st.plotly_chart(fig_change, use_container_width=True)
+    
+    # Detailed table
+    st.subheader("📋 Detailed Results")
+    
+    # Format the dataframe for display
+    display_df = df.copy()
+    display_df['Current Price'] = display_df['Current Price'].apply(lambda x: f"€{x:.2f}")
+    display_df['Recommended Price'] = display_df['Recommended Price'].apply(lambda x: f"€{x:.2f}")
+    display_df['Avg Competitor Price'] = display_df['Avg Competitor Price'].apply(lambda x: f"€{x:.2f}")
+    display_df['Price Change %'] = display_df['Price Change %'].apply(lambda x: f"{x:.1f}%")
+    
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    
+    # Download button
+    csv = df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Results (CSV)",
+        data=csv,
+        file_name=f"price_recommendations_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv"
+    )
+
+# Page: Analysis
+elif page == "📈 Analysis":
+    st.header("📈 Market Analysis")
+    
+    if not st.session_state.data_uploaded:
+        st.warning("⚠️ Please upload data first!")
+        st.stop()
+    
+    # Category analysis
+    st.subheader("📦 Category Analysis")
+    
+    # Aggregate data by category
+    category_data = []
+    for file_name, df in st.session_state.scraper_data.items():
+        if file_name not in ['overview', 'mapping'] and 'price' in df.columns:
+            category = file_name.replace('.csv', '').replace('_', ' ').title()
+            prices = df['price'].dropna()
+            if len(prices) > 0:
+                category_data.append({
+                    'Category': category,
+                    'Avg Price': prices.mean(),
+                    'Min Price': prices.min(),
+                    'Max Price': prices.max(),
+                    'Product Count': len(prices),
+                    'Price Range': prices.max() - prices.min()
+                })
+    
+    if category_data:
+        cat_df = pd.DataFrame(category_data)
         
-        with col3:
-            total_competitors = results_df["Competitor Count"].sum()
-            st.metric(
-                "Total Competitors Analyzed",
-                f"{total_competitors:,}"
-            )
-        
-        with col4:
-            if "AB P-Value" in results_df.columns:
-                significant = (pd.to_numeric(results_df["AB P-Value"], errors='coerce') < 0.05).sum()
-                st.metric(
-                    "Statistically Significant",
-                    f"{significant}/{len(results_df)}"
-                )
-        
-        # Category breakdown
-        st.subheader("📦 Results by Category")
-        
-        category_summary = results_df.groupby("Category").agg({
-            "Profit Delta": ["sum", "mean"],
-            "Product Name": "count"
-        }).round(2)
-        
-        category_summary.columns = ["Total Profit Δ", "Avg Profit Δ", "Products"]
-        st.dataframe(category_summary, use_container_width=True)
-        
-        # Detailed results table
-        st.subheader("🔍 Detailed Product Results")
-        
-        # Select columns to display
-        display_cols = [
-            "Product Name", "Category", "Recommended Price",
-            "Avg Competitor Price", "Competitor Count",
-            "Profit Current", "Profit Recommended", "Profit Delta"
-        ]
-        
-        if "AB P-Value" in results_df.columns:
-            display_cols.append("AB P-Value")
-        
-        st.dataframe(
-            results_df[display_cols],
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # Download buttons
-        st.markdown("---")
+        # Visualizations
         col1, col2 = st.columns(2)
         
         with col1:
-            csv = results_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Results (CSV)",
-                data=csv,
-                file_name=f"price_recommendations_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
+            fig1 = px.bar(
+                cat_df,
+                x='Category',
+                y='Avg Price',
+                title='Average Price by Category',
+                color='Avg Price',
+                color_continuous_scale='Viridis'
             )
+            fig1.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig1, use_container_width=True)
         
         with col2:
-            if st.button("📊 Generate Full Dashboard"):
-                try:
-                    build_dashboard(load_data())
-                    with open("dashboard.html", "r") as f:
-                        html_content = f.read()
-                    st.download_button(
-                        label="📥 Download Dashboard (HTML)",
-                        data=html_content,
-                        file_name=f"pricing_dashboard_{datetime.now().strftime('%Y%m%d')}.html",
-                        mime="text/html"
-                    )
-                except Exception as e:
-                    st.error(f"Error generating dashboard: {str(e)}")
+            fig2 = px.scatter(
+                cat_df,
+                x='Product Count',
+                y='Price Range',
+                size='Avg Price',
+                color='Category',
+                title='Market Diversity Analysis',
+                hover_data=['Category', 'Avg Price']
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        
+        # Detailed category table
+        st.subheader("📊 Category Statistics")
+        cat_display = cat_df.copy()
+        for col in ['Avg Price', 'Min Price', 'Max Price', 'Price Range']:
+            cat_display[col] = cat_display[col].apply(lambda x: f"€{x:.2f}")
+        
+        st.dataframe(cat_display, use_container_width=True, hide_index=True)
+
+# Page: Instructions
+elif page == "ℹ️ Instructions":
+    st.header("ℹ️ How to Use This System")
+    
+    st.markdown("""
+    ## 🔄 Complete Workflow
+    
+    ### 1️⃣ Local Scraping (On Your Computer)
+    
+    ```bash
+    # In your project folder
+    python scraper.py
+    ```
+    
+    This will:
+    - Scrape competitor prices from all configured stores
+    - Save CSV files in the `product_data/` folder
+    - Take 10-30 minutes depending on categories
+    
+    ### 2️⃣ Prepare Upload
+    
+    **Option A - ZIP Method (Recommended):**
+    1. Go to your project folder
+    2. Select these items:
+       - `product_data/` folder (entire folder)
+       - `Dzukou_Pricing_Overview_With_Names - Copy.csv`
+       - `product_data_mapping.csv`
+       - `category_keywords.json` (optional)
+    3. Right-click → "Compress" or "Send to ZIP"
+    
+    **Option B - Individual Files:**
+    - Upload each CSV from `product_data/`
+    - Upload the overview and mapping files separately
+    
+    ### 3️⃣ Upload to Cloud App
+    
+    1. Go to "Upload Data" page
+    2. Choose your upload method
+    3. Select your files
+    4. Wait for confirmation
+    
+    ### 4️⃣ Optimize Prices
+    
+    1. Go to "Optimize Prices" page
+    2. Review settings (optional)
+    3. Click "Run Price Optimization"
+    4. Wait for completion
+    
+    ### 5️⃣ Review Results
+    
+    1. View Dashboard - Visual analysis
+    2. Analysis - Market insights
+    3. Download CSV - For implementation
+    
+    ## 🔧 Troubleshooting
+    
+    **"File encoding error"**
+    - The app handles multiple encodings automatically
+    - If issues persist, save CSVs as UTF-8
+    
+    **"Missing data"**
+    - Ensure all required files are uploaded
+    - Check file names match exactly
+    
+    **"No prices found"**
+    - Run scraper again
+    - Check if sites have changed
+    - Verify search terms in `category_keywords.json`
+    
+    ## 📅 Recommended Schedule
+    
+    - **Weekly**: Run scraper and update prices
+    - **Monthly**: Review pricing strategy
+    - **Quarterly**: Adjust categories and keywords
+    
+    ## 💡 Pro Tips
+    
+    1. **Save scraper results** - Keep historical data
+    2. **Monitor competitors** - Add new stores as needed
+    3. **Test prices** - Start with small changes
+    4. **Track results** - Measure actual vs predicted
+    
+    ## 🆘 Need Help?
+    
+    - Check scraper logs for errors
+    - Verify all files are present
+    - Ensure stable internet for scraping
+    - Contact support with error screenshots
+    """)
 
 # Footer
 st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: #666;'>
-    Dzukou Dynamic Pricing Toolkit | Built with ❤️ for sustainable business
+    Dzukou Dynamic Pricing System | Upload-Based Architecture
     </div>
     """,
     unsafe_allow_html=True
