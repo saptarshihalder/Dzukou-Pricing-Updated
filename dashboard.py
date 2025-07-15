@@ -4,16 +4,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import numpy as np
+from google_sheets_manager import get_manager
 
 BASE_DIR = Path(__file__).resolve().parent
-OVERVIEW_CSV = BASE_DIR / "Dzukou_Pricing_Overview_With_Names - Copy.csv"
+SPREADSHEET_ID = "19urMb1e7hPHSs6rF5W6kckToXbBoaA-kauGSQsefw4Q"
+OVERVIEW_SHEET = "Sheet1"
 RECOMMENDED_CSV = BASE_DIR / "recommended_prices.csv"
 OUT_HTML = BASE_DIR / "dashboard.html"
 
 
 def load_data():
     """Load overview and recommendation data and compute deltas."""
-    overview = pd.read_csv(OVERVIEW_CSV, encoding="cp1252")
+    manager = get_manager(SPREADSHEET_ID)
+    overview = manager.get_sheet_as_df(OVERVIEW_SHEET)
     recommended = pd.read_csv(RECOMMENDED_CSV)
 
     # Trim whitespace from column names and key fields so merges work
