@@ -7,6 +7,7 @@ import re
 import statistics
 import json
 import random
+import pandas as pd
 from google_sheets_manager import get_manager
 from scipy import stats
 from pathlib import Path
@@ -20,6 +21,7 @@ except Exception:  # library may not be installed
     Real = None
 
 BASE_DIR = Path(__file__).resolve().parent
+FALLBACK_OVERVIEW = BASE_DIR / "Dzukou_Pricing_Overview_With_Names - Copy.csv"
 
 PRICE_STEP = 0.25  # granularity for optimizer
 
@@ -375,9 +377,19 @@ def categorize_product(name: str) -> str:
 
 
 def read_overview() -> Dict[str, Dict[str, float]]:
-    """Load product overview data from the Google Sheet."""
-    manager = get_manager(SPREADSHEET_ID)
-    df = manager.get_sheet_as_df(OVERVIEW_SHEET)
+    """Load product overview data.
+
+    If Google Sheets credentials are unavailable, the function falls back to the
+    local CSV export ``FALLBACK_OVERVIEW``.
+    """
+    try:
+        manager = get_manager(SPREADSHEET_ID)
+        df = manager.get_sheet_as_df(OVERVIEW_SHEET)
+    except Exception as exc:
+        if FALLBACK_OVERVIEW.exists():
+            df = pd.read_csv(FALLBACK_OVERVIEW, encoding="cp1252")
+        else:
+            raise RuntimeError("Google Sheets credentials not found and fallback CSV missing") from exc
     data: Dict[str, Dict[str, float]] = {}
     for _, row in df.iterrows():
         name = str(row.get("Product Name", "")).strip()
