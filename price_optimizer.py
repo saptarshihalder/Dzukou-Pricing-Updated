@@ -7,6 +7,7 @@ import re
 import statistics
 import json
 import random
+from google_sheets_manager import get_manager
 from scipy import stats
 from pathlib import Path
 from typing import Dict, List
@@ -205,7 +206,9 @@ def bayesian_optimize_price(
 
 
 
-OVERVIEW_CSV = BASE_DIR / "Dzukou_Pricing_Overview_With_Names - Copy.csv"
+# Overview data now lives in a Google Sheet rather than a local CSV file.
+SPREADSHEET_ID = "19urMb1e7hPHSs6rF5W6kckToXbBoaA-kauGSQsefw4Q"
+OVERVIEW_SHEET = "Sheet1"
 MAPPING_CSV = BASE_DIR / "product_data_mapping.csv"
 
 # Minimum profit margins by category
@@ -372,15 +375,17 @@ def categorize_product(name: str) -> str:
 
 
 def read_overview() -> Dict[str, Dict[str, float]]:
-    data = {}
-    # The overview CSV may come from Excel and often uses Windows-1252 encoding
-    with open(OVERVIEW_CSV, newline="", encoding="cp1252") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            name = row["Product Name"].strip()
-            cur_price = float(row[" Current Price "].replace("€", "").strip())
-            unit_cost = float(row[" Unit Cost "].replace("€", "").strip())
-            data[name] = {"current_price": cur_price, "unit_cost": unit_cost}
+    """Load product overview data from the Google Sheet."""
+    manager = get_manager(SPREADSHEET_ID)
+    df = manager.get_sheet_as_df(OVERVIEW_SHEET)
+    data: Dict[str, Dict[str, float]] = {}
+    for _, row in df.iterrows():
+        name = str(row.get("Product Name", "")).strip()
+        if not name:
+            continue
+        cur_price = float(str(row.get(" Current Price ", "0")).replace("€", "").strip())
+        unit_cost = float(str(row.get(" Unit Cost ", "0")).replace("€", "").strip())
+        data[name] = {"current_price": cur_price, "unit_cost": unit_cost}
     return data
 
 
