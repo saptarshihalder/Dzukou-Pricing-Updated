@@ -4,30 +4,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import numpy as np
-from google_sheets_manager import get_manager
+
 
 BASE_DIR = Path(__file__).resolve().parent
 FALLBACK_OVERVIEW = BASE_DIR / "Dzukou_Pricing_Overview_With_Names - Copy.csv"
-SPREADSHEET_ID = "19urMb1e7hPHSs6rF5W6kckToXbBoaA-kauGSQsefw4Q"
-OVERVIEW_SHEET = "Sheet1"
 RECOMMENDED_CSV = BASE_DIR / "recommended_prices.csv"
 OUT_HTML = BASE_DIR / "dashboard.html"
 
 
 def load_data():
-    """Load overview and recommendation data and compute deltas.
-
-    If Google Sheets credentials are missing the function falls back to the
-    local CSV export ``FALLBACK_OVERVIEW``.
-    """
-    try:
-        manager = get_manager(SPREADSHEET_ID)
-        overview = manager.get_sheet_as_df(OVERVIEW_SHEET)
-    except Exception as exc:
-        if FALLBACK_OVERVIEW.exists():
-            overview = pd.read_csv(FALLBACK_OVERVIEW, encoding="cp1252")
-        else:
-            raise RuntimeError("Google Sheets credentials not found and fallback CSV missing") from exc
+    """Load overview and recommendation data and compute deltas."""
+    if not FALLBACK_OVERVIEW.exists():
+        raise RuntimeError("Overview CSV not found")
+    overview = pd.read_csv(FALLBACK_OVERVIEW, encoding="cp1252")
     recommended = pd.read_csv(RECOMMENDED_CSV)
 
     # Trim whitespace from column names and key fields so merges work
