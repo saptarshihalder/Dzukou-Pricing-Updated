@@ -10,13 +10,11 @@ import ast
 
 from scraper import DEFAULT_CATEGORIES
 from utils import canonical_key
-from google_sheets_manager import get_manager
 
 BASE_DIR = Path(__file__).resolve().parent
 MAPPING_CSV = BASE_DIR / "product_data_mapping.csv"
 KEYWORDS_JSON = BASE_DIR / "category_keywords.json"
-SPREADSHEET_ID = "19urMb1e7hPHSs6rF5W6kckToXbBoaA-kauGSQsefw4Q"
-OVERVIEW_SHEET = "Sheet1"
+OVERVIEW_CSV = BASE_DIR / "Dzukou_Pricing_Overview_With_Names - Copy.csv"
 DATA_DIR = BASE_DIR / "product_data"
 SCRAPER_PY = BASE_DIR / "scraper.py"
 class ProductManagerGUI:
@@ -221,12 +219,18 @@ class ProductManagerGUI:
                 writer.writeheader()
                 writer.writerows(mapping)
 
-            # update overview sheet
-            manager = get_manager(SPREADSHEET_ID)
-            manager.append_row(
-                OVERVIEW_SHEET,
-                [name, prod_id, str(price_val), str(cost_val)],
-            )
+            # update overview CSV
+            overview_exists = OVERVIEW_CSV.exists()
+            with open(OVERVIEW_CSV, "a", newline="") as f:
+                writer = csv.writer(f)
+                if not overview_exists:
+                    writer.writerow([
+                        "Product Name",
+                        "Product ID",
+                        " Current Price ",
+                        " Unit Cost",
+                    ])
+                writer.writerow([name, prod_id, f"{price_val:.2f}", f"{cost_val:.2f}"])
 
             kw_data = self.load_keywords()
             kws = kw_data.setdefault(category, [])

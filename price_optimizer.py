@@ -8,7 +8,6 @@ import statistics
 import json
 import random
 import pandas as pd
-from google_sheets_manager import get_manager
 from scipy import stats
 from pathlib import Path
 from typing import Dict, List
@@ -208,9 +207,7 @@ def bayesian_optimize_price(
 
 
 
-# Overview data now lives in a Google Sheet rather than a local CSV file.
-SPREADSHEET_ID = "19urMb1e7hPHSs6rF5W6kckToXbBoaA-kauGSQsefw4Q"
-OVERVIEW_SHEET = "Sheet1"
+# Overview data is stored locally in ``FALLBACK_OVERVIEW``.
 MAPPING_CSV = BASE_DIR / "product_data_mapping.csv"
 
 # Minimum profit margins by category
@@ -377,19 +374,10 @@ def categorize_product(name: str) -> str:
 
 
 def read_overview() -> Dict[str, Dict[str, float]]:
-    """Load product overview data.
-
-    If Google Sheets credentials are unavailable, the function falls back to the
-    local CSV export ``FALLBACK_OVERVIEW``.
-    """
-    try:
-        manager = get_manager(SPREADSHEET_ID)
-        df = manager.get_sheet_as_df(OVERVIEW_SHEET)
-    except Exception as exc:
-        if FALLBACK_OVERVIEW.exists():
-            df = pd.read_csv(FALLBACK_OVERVIEW, encoding="cp1252")
-        else:
-            raise RuntimeError("Google Sheets credentials not found and fallback CSV missing") from exc
+    """Load product overview data from ``FALLBACK_OVERVIEW``."""
+    if not FALLBACK_OVERVIEW.exists():
+        raise RuntimeError("Overview CSV not found")
+    df = pd.read_csv(FALLBACK_OVERVIEW, encoding="cp1252")
     data: Dict[str, Dict[str, float]] = {}
     for _, row in df.iterrows():
         name = str(row.get("Product Name", "")).strip()
